@@ -4,17 +4,19 @@
 
 .DESCRIPTION
     Having an understanding of which OUs are allowing remote access to local administrators helps identify gaps in organizational security policy. It can also be useful for penetration testing or attack simulation work, where local administrator or LAPS credentials have been compromised.
+    Note that this script requires Microsoft RSAT modules if GPOReport and OU list files are not provided.
+    For information on RSAT, see https://docs.microsoft.com/en-us/troubleshoot/windows-server/system-management-components/remote-server-administration-tools
 
 .EXAMPLE
-    .\Get-RemoteAdminPermittedPermittedOUs.ps1
+    ./Get-RemoteAdminPermittedPermittedOUs.ps1
     If you're on a domain joined machine and authenticated with a domain account, no arguments are needed. 
 
 .EXAMPLE
-    .\Get-RemoteAdminPermittedPermittedOUs.ps1 -Domain "thedomain.com"
+    ./Get-RemoteAdminPermittedPermittedOUs.ps1 -Domain "thedomain.com"
     Depending on the domain configuration, one may wish to specify a domain to analyze. 
 
 .EXAMPLE
-    .\Get-RemoteAdminPermittedPermittedOUs.ps1 -GPOReportFile "C:\Path\To\GPOReport.xml" -OUListFile "C:\Path\To\OUList.txt"
+    ./Get-RemoteAdminPermittedPermittedOUs.ps1 -GPOReportFile "C:\Path\To\GPOReport.xml" -OUListFile "C:\Path\To\OUList.txt"
     If you have manually obtained the GPO Report and OU List, provide the file paths in this way. 
 
 .PARAMETER Domain
@@ -34,14 +36,67 @@
 .LINK
     https://labs.f-secure.com/blog/enumerating-remote-access-policies-through-gpo/
 #>
+[CmdletBinding()]
+param(
+    [string] $Domain,
+    [string] $GPOReportFile,
+    [string] $OUListFile
+)
 
 #Retrieve the GPO Report, by file path or dynamically via RSAT
-[xml]$GPOXML = Get-Content -Path "C:\Users\Administrator\Desktop\gporeport.xml"
-#[xml]$GPOXML = Get-GPOReport -All -Domain "thedomain.com" -ReportType xml
+[xml]$GPOXML = ""
+if($GPOReportFile)
+{
+  try {
+    [xml]$GPOXML = Get-Content -Path $GPOReportFile
+  }
+  catch [System.Exception]
+  {
+    throw "Could not read GPOReportFile at path $GPOReportFile"
+  }
+}
+else {
+  if($Domain){
+    try {
+      [xml]$GPOXML = Get-GPOReport -All -Domain $Domain -ReportType xml
+    }
+    catch [System.Exception]
+    {
+      throw "Could not obtain GPO Report for $Domain. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+    }
+  }
+  else {
+    try {
+      [xml]$GPOXML = Get-GPOReport -All -ReportType xml
+    }
+    catch [System.Exception]
+    {
+      throw "Could not obtain GPO Report. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+    }
+  }
+}
 
 #Retrieve complete list of OUs in domain, by file path or dynamically via RSAT
-$AllOUs = Get-Content -Path "C:\Users\Administrator\Desktop\AllOUs.txt"
-#$AllOUs = Get-ADOrganizationalUnit -Filter 'Name -like "*"' | Select -ExpandProperty DistinguishedName
+$OUList = ""
+if($OUListFile)
+{
+  try {
+    $OUList = Get-Content -Path $OUListFile
+  }
+  catch [System.Exception]
+  {
+    throw "Could not read OUListFile at path $OUListFile"
+  }
+}
+else {
+  try {
+    $OUList = Get-ADOrganizationalUnit -Filter 'Name -like "*"' | Select -ExpandProperty DistinguishedName
+  }
+  catch [System.Exception]
+  {
+    throw "Could not obtain list of OUs from domain. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+  }
+}
 
 
 $XMLNameSpaces = @{gpns="http://www.microsoft.com/GroupPolicy/Settings"; 

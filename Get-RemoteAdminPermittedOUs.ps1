@@ -119,12 +119,61 @@ $LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q
 $LocalAccountTokenFilterPolicyNodes = Select-Xml -Xml $GPOXML -XPath $LATPXPath -Namespace $XMLNameSpaces
 
 #Get the XML nodes associated with OU names
-$UHOHOUs = Select-Xml -Xml $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces
+$AllGPOManagedOUs = Select-Xml -XML $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces | Select-Object -Expand Node | Select-Object -Expand '#text'
 
-$SecuredOUs = @()
+Write-Output $AllGPOManagedOUs.Count
+$AllGPOManagedOUs = $AllGPOManagedOUs | Where-Object {$_ -match "/"}
+Write-Output $AllGPOManagedOUs.Count
 
-$FATEnabledOUs = @()
-$LUADisabledOUs = @()
+$UHOHOUs = @()
+$AnyNonDefaultsp = 0
+
+#{"OU Name", [FAT, LUA, LATP]}, set to default
+$OUs2Policy = @{}
+ForEach ($OU in $AllGPOManagedOUs)
+{
+  $OUs2Policy[$OU] = @(0, 1, 0)
+}
+
+function RemoveChildOUs
+{
+  Param($OUs)
+
+  $ToBeRemoved = @()
+  ForEach ($OOU in $OUs)
+  {
+    $OUs | % {if ($OOU -ne $_) {if($_ -Match $OOU){$ToBeRemoved += $_}}}
+  }
+
+  $Parents = $OUs | % { if ($_ -notin $ToBeRemoved) {$_}}
+
+  return $Parents
+}
+
+function FindImplicit
+{
+  Param($OUs, $Parents)
+
+  $Implicits = ,$()
+  ForEach ($OU in $OUs)
+  {
+    $Match = 0
+    ForEach ($Parent in $Parents)
+    {
+      if ($OU -Match $Parent)
+      {
+        $Match = 1
+      }
+    }
+    if ($Match -eq 0)
+    {
+      #Write-Verbose "HERE for $OU"
+      $Implicits += $OU
+    }
+  }
+
+  return $Implicits
+}
 
 Write-Verbose "--Checking FilterAdministrationToken--"
 ForEach($GPONode in $FilterAdministratorTokenNodes)
@@ -138,11 +187,26 @@ ForEach($GPONode in $FilterAdministratorTokenNodes)
 
   if($FATSetting -eq 0)
   {
-      Write-Verbose "FilterAdministrationToken is not restricting remote session privileges, though, cause it's disabled by the policy. (This is the default setting)"
+    Write-Verbose "FilterAdministrationToken is not restricting remote session privileges, though, cause it's disabled by the policy. (This is the default setting)"
+    #If its explicitly disabled, track by marking -1 and assume normal inheritance
+    ForEach($OUNode in $OUNodes)
+    {
+      $OUs2Policy[$OUNode.SOMPath][0] = -1
+    }
   }
+
   if($FATSetting -eq 1)
   {
-      Write-Verbose "FilterAdministrationToken is enabled, which restricts RID-500 Administrator from performing privileged actions via non-interactive remote sessions."
+    $AnyNonDefaultsp = 1
+    Write-Verbose "FilterAdministrationToken is enabled, which restricts RID-500 Administrator from performing privileged actions via non-interactive remote sessions."
+
+    ForEach($OUNode in $OUNodes)
+    {
+      if ($OUs2Policy[$OUNode.SOMPath][0] -ne -1)
+      {
+        $OUs2Policy[$OUNode.SOMPath][0] = 1
+      }
+    }
   }
 }
 Write-Verbose ""
@@ -159,17 +223,28 @@ ForEach($GPONode in $EnableLUANodes)
 
   if($EnableLUASetting -eq 0)
   {
-      Write-Verbose "EnableLUA is disabled, which allows any local administrator (RID-500 and others) to perform privileged remote authentication."
+    $AnyNonDefaultsp = 1
+    Write-Verbose "EnableLUA is disabled, which allows any local administrator (RID-500 and others) to perform privileged remote authentication."
+
+    ForEach($OUNode in $OUNodes)
+    {
+      $OUs2Policy[$OUNode.SOMPath][1] = 0
+    }
   }
   if($EnableLUASetting -eq 1)
   {
-      Write-Verbose "EnableLUA is enabled, meaning the system relies on the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy. (This is the default setting)"
+    #If its explicitly disabled, track by marking -1 and assume normal inheritance
+    ForEach($OUNode in $OUNodes)
+    {
+      $OUs2Policy[$OUNode.SOMPath][1] = -1
+    }
+    Write-Verbose "EnableLUA is enabled, meaning the system relies on the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy. (This is the default setting)"
   }
 } 
 Write-Verbose ""
 
 Write-Verbose "--Checking LocalAccountTokenFilterPolicy--"
-Foreach($GPONode in $LocalAccountTokenFilterPolicyNodes)
+ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 {
   "Explicit LocalAccountTokenFilterPolicy directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
@@ -179,9 +254,55 @@ Foreach($GPONode in $LocalAccountTokenFilterPolicyNodes)
   if ($RegistryValue -eq 0)
   {
     Write-Verbose "LocalAccountTokenFilterPolicy is disabled, meaning that non-RID-500 administrators remote sessions are properly filtered. (This is the default setting)"
+    #If its explicitly disabled, track by marking -1 and assume normal inheritance
+    ForEach($OUNode in $OUNodes)
+    {
+      $OUs2Policy[$OUNode.SOMPath][2] = -1
+    }
   }
-    if ($RegistryValue -eq 1)
+  if ($RegistryValue -eq 1)
   {
-    Write-Verbose "LocalAccountTokenFilterPolicy is enabled, meaning that non-RID-500 administrators remote sessions are given elevated privileges. (This is the default setting)"
+    $AnyNonDefaultsp = 1
+    Write-Verbose "LocalAccountTokenFilterPolicy is enabled, meaning that non-RID-500 administrators remote sessions are given elevated privileges."
+
+    ForEach($OUNode in $OUNodes)
+    {
+      $OUs2Policy[$OUNode.SOMPath][2] = 1
+    }
   }
 }
+
+if($AnyNonDefaultsp -eq 0)
+{
+  Write-Output "All OUs managed by GPO are using the default policies for remote authentication. This indicates the RID 500 administrator can authenticate remotely and obtain a privileged session, while other local administrators cannot obtain a privileged session. Non-RID-500 administrators can still take administrative action via RDP, however."
+  Exit
+}
+
+Write-Verbose "--Analyzing FilterAdministrationToken--"
+$FATEnabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][0] -eq 1} | Sort-Object | Get-Unique
+$FATParents = RemoveChildOUs($FATEnabled)
+$FATExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][0] -eq -1} | Sort-Object | Get-Unique
+$FATImplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][0] -eq 0} | Sort-Object | Get-Unique
+
+
+if ($FATEnabled.Count -gt 0)
+{
+  Write-Output "FilterAdministrationToken is enabled for the following OUs and inherited by their children, which restricts RID-500 Administrator from performing privileged actions via non-interactive remote sessions:"
+  $FATParents | Write-Output 
+  Write-Output ""
+}
+
+if ($FATExplicitlyDisabled.Count -gt 0)
+{
+  Write-Output "FilterAdministrationToken is explicitly disabled for the following OUs, which likely bypasses any inherited restrictions. This indicates RID-500 Administrator can perform privileged actions via non-interactive remote sessions:"
+  RemoveChildOUs($FATExplicitlyDisabled) | Write-Output 
+  Write-Output ""
+}
+
+if ($FATImplicitlyDisabled.Count -gt 0)
+{
+  Write-Output "FilterAdministrationToken is the default value for the following OUs. OUs which are likely restricted by inheritance have been removed."
+  FindImplicit $FATImplicitlyDisabled $FATParents  | Write-Output
+  Write-Output ""
+}
+

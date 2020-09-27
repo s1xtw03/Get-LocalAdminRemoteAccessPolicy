@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    This script analyzes group policy objects to detect and list all OUs in an AD Domain which permit remote access to local administrator accounts.
+    This script analyzes group policy objects to detect and list all OUs in an AD Domain which permit elevated remote access to local administrator accounts.
 
 .DESCRIPTION
     Having an understanding of which OUs are allowing remote access to local administrators helps identify gaps in organizational security policy. It can also be useful for penetration testing or attack simulation work, where local administrator or LAPS credentials have been compromised.
@@ -29,6 +29,9 @@
 .PARAMETER OUListFile
     The path to a file containing all GPOs for the domain you wish to analyze. 
     Should be generated via: Get-ADOrganizationalUnit -Filter 'Name -like "*"' | Select -ExpandProperty DistinguishedName
+
+.PARAMETER Verbose
+    Print additional output as this script searches group policy objects.
 
 .LINK 
     https://www.harmj0y.net/blog/redteaming/pass-the-hash-is-dead-long-live-localaccounttokenfilterpolicy/
@@ -116,15 +119,17 @@ $LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q
 $LocalAccountTokenFilterPolicyNodes = Select-Xml -Xml $GPOXML -XPath $LATPXPath -Namespace $XMLNameSpaces
 
 #Get the XML nodes associated with OU names
-$AllOUs = Select-Xml -Xml $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces
+$UHOHOUs = Select-Xml -Xml $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces
 
 $SecuredOUs = @()
-$UHOHOUs = @()
 
-Write-Output "--Checking FilterAdministrationToken--"
+$FATEnabledOUs = @()
+$LUADisabledOUs = @()
+
+Write-Verbose "--Checking FilterAdministrationToken--"
 ForEach($GPONode in $FilterAdministratorTokenNodes)
 {
-  "Explicit FilterAdministratorToken directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Output
+  "Explicit FilterAdministratorToken directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
   $SecurityOption = $GPONode.Node.Computer.ExtensionData.Extension.SecurityOptions | Where-Object {$_.KeyName -eq "$FATKey"}
   $FATSetting = $SecurityOption.SettingNumber
@@ -133,20 +138,19 @@ ForEach($GPONode in $FilterAdministratorTokenNodes)
 
   if($FATSetting -eq 0)
   {
-      Write-Output "FilterAdministrationToken is not restricting remote login, though, cause it's disabled by the policy. (This is also the default setting)"
-
+      Write-Verbose "FilterAdministrationToken is not restricting remote session privileges, though, cause it's disabled by the policy. (This is the default setting)"
   }
   if($FATSetting -eq 1)
   {
-      Write-Output "FilterAdministrationToken is enabled, which restricts RID-500 Administrator from performing privileged remote authentication (things run as medium-integrity)."
+      Write-Verbose "FilterAdministrationToken is enabled, which restricts RID-500 Administrator from performing privileged actions via non-interactive remote sessions."
   }
 }
-Write-Output ""
+Write-Verbose ""
 
-Write-Output "--Checking EnableLUA--"
+Write-Verbose "--Checking EnableLUA--"
 ForEach($GPONode in $EnableLUANodes)
 {
-  "Explicit EnableLUA directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Output
+  "Explicit EnableLUA directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
   $SecurityOption = $GPONode.Node.Computer.ExtensionData.Extension.SecurityOptions | Where-Object {$_.KeyName -eq "$EnableLUAKey"}
   $EnableLUASetting = $SecurityOption.SettingNumber
@@ -155,20 +159,29 @@ ForEach($GPONode in $EnableLUANodes)
 
   if($EnableLUASetting -eq 0)
   {
-      Write-Output "EnableLUA is disabled, which allows any local administrator (RID-500 and others) to perform privileged remote authentication."
-
+      Write-Verbose "EnableLUA is disabled, which allows any local administrator (RID-500 and others) to perform privileged remote authentication."
   }
   if($EnableLUASetting -eq 1)
   {
-      Write-Output "EnableLUA is enabled, which restricts all non-RID-500 administrators from performing privileged remote authentication (things run as medium-integrity). (This is also the default setting)"
+      Write-Verbose "EnableLUA is enabled, meaning the system relies on the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy. (This is the default setting)"
   }
 } 
-Write-Output ""
+Write-Verbose ""
 
-Write-Output "--Checking LocalAccountTokenFilterPolicy--"
+Write-Verbose "--Checking LocalAccountTokenFilterPolicy--"
 Foreach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 {
-  "Explicit LocalAccountTokenFilterPolicy directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Output
+  "Explicit LocalAccountTokenFilterPolicy directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
   $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry | Where-Object {$_.KeyName -eq "LocalAccountTokenFilterPolicy"}
+  $RegistryValue = $RegistryProperty.Value
+
+  if ($RegistryValue -eq 0)
+  {
+    Write-Verbose "LocalAccountTokenFilterPolicy is disabled, meaning that non-RID-500 administrators remote sessions are properly filtered. (This is the default setting)"
+  }
+    if ($RegistryValue -eq 1)
+  {
+    Write-Verbose "LocalAccountTokenFilterPolicy is enabled, meaning that non-RID-500 administrators remote sessions are given elevated privileges. (This is the default setting)"
+  }
 }

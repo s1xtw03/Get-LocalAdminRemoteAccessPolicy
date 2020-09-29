@@ -5,6 +5,7 @@
 .DESCRIPTION
     Having an understanding of which OUs are allowing remote access to local administrators helps identify gaps in organizational security policy. It can also be useful for penetration testing or attack simulation work, where local administrator or LAPS credentials have been compromised.
     Note that this script requires Microsoft RSAT modules if the GPOReport is not provided.
+    For information on the associated policies, see https://github.com/s1xtw03/Get-LocalAdminRemoteAccessPolicy
     For information on RSAT, see https://docs.microsoft.com/en-us/troubleshoot/windows-server/system-management-components/remote-server-administration-tools
 
 .EXAMPLE
@@ -30,17 +31,15 @@
     Print additional output as this script searches group policy objects.
 
 .LINK 
-    https://www.harmj0y.net/blog/redteaming/pass-the-hash-is-dead-long-live-localaccounttokenfilterpolicy/
+    https://github.com/s1xtw03/Get-LocalAdminRemoteAccessPolicy
 
-.LINK
-    https://labs.f-secure.com/blog/enumerating-remote-access-policies-through-gpo/
 #>
 [CmdletBinding()]
 param(
     [string] $Domain,
     [string] $GPOReportFile
 )
-
+$ErrorActionPreference = "Stop"
 #Retrieve the GPO Report, by file path or dynamically via RSAT
 [xml]$GPOXML = ""
 if($GPOReportFile)
@@ -50,7 +49,8 @@ if($GPOReportFile)
   }
   catch [System.Exception]
   {
-    throw "Could not read GPOReportFile at path $GPOReportFile"
+    Write-Error "Could not read GPOReportFile at path $GPOReportFile" 
+    Exit
   }
 }
 else {
@@ -60,7 +60,8 @@ else {
     }
     catch [System.Exception]
     {
-      throw "Could not obtain GPO Report for $Domain. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+      Write-Error "Could not obtain GPO Report for $Domain. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+      Exit
     }
   }
   else {
@@ -69,7 +70,8 @@ else {
     }
     catch [System.Exception]
     {
-      throw "Could not obtain GPO Report. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+      Write-Error "Could not obtain GPO Report. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
+      Exit
     }
   }
 }
@@ -91,6 +93,7 @@ if ($AllGPOManagedOUs.Count -eq 0)
   if($AllGPOManagedOUs.Count -eq 0)
   {
     Write-Output "Couldn't parse the XML, or the GPO doesn't reference any OUs."
+    Exit
   }
 }
 

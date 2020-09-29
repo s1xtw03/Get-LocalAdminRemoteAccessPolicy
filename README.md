@@ -1,5 +1,5 @@
 # Get-LocalAdminRemoteAccessPolicy
-This script analyzes group policy objects to detect and list all OUs in an AD Domain which permit remote access to local administrator accounts.
+This script analyzes group policy objects to detect and list OUs in an AD Domain which permit remote access to local administrator accounts.
 
 Having an understanding of which OUs are allowing remote access to local administrators helps identify gaps in organizational security policy. It can also be useful for penetration testing or attack simulation work, where local administrator credentials have been compromised.
 
@@ -48,7 +48,7 @@ One shortcoming of this script is that it assumes default inheritance. In most c
 
 ## Thanks
 
-DetectionLab
-John Redford & Dalton Wright
-SomaFM for Groove Salad and Thistle Radio
-harmj0y, William Knowles and Jon Cave
+* John Redford for holding my hand through the XPath queries & Dalton Wright for being part of the script's genesis
+* [SomaFM](https://somafm.com/) for getting me through the last 15% with Groove Salad and Thistle Radio
+* [harmj0y](https://www.harmj0y.net/blog/redteaming/pass-the-hash-is-dead-long-live-localaccounttokenfilterpolicy/), [William Knowles and Jon Cave](https://labs.f-secure.com/blog/enumerating-remote-access-policies-through-gpo/) for their blogs on the policy implications
+* [DetectionLab](https://github.com/clong/DetectionLab) for an effortless test environment

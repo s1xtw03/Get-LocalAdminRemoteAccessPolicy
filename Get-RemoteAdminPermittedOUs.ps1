@@ -88,16 +88,13 @@ $EnableLUAKey = "MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\Syst
 $EnableLUAXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$EnableLUAKey']]"
 $EnableLUANodes = Select-Xml -Xml $GPOXML -XPath $EnableLUAXPath -Namespace $XMLNameSpaces
 
-#$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
-$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='Enabled']]"
+$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
 $LocalAccountTokenFilterPolicyNodes = Select-Xml -Xml $GPOXML -XPath $LATPXPath -Namespace $XMLNameSpaces
 
 #Get the XML nodes associated with OU names
 $AllGPOManagedOUs = Select-Xml -XML $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces | Select-Object -Expand Node | Select-Object -Expand '#text'
 
-Write-Output $AllGPOManagedOUs.Count
 $AllGPOManagedOUs = $AllGPOManagedOUs | Where-Object {$_ -match "/"}
-Write-Output $AllGPOManagedOUs.Count
 
 $UHOHOUs = @()
 $AnyNonDefaultsp = 0
@@ -221,10 +218,8 @@ ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 {
   "Explicit LocalAccountTokenFilterPolicy directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
-  $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry | Where-Object {$_.KeyName -eq "Enabled"}
+  $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry.Properties | Where-Object {$_.Name -eq "LocalAccountTokenFilterPolicy"}
   $RegistryValue = $RegistryProperty.Value
-
-  Write-Verbose $RegistryValue
 
   if ($RegistryValue -eq "00000000")
   {
@@ -235,7 +230,7 @@ ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
       $OUs2Policy[$OUNode.SOMPath][2] = -1
     }
   }
-  if ($RegistryValue -eq 1)
+  if ($RegistryValue -eq "00000001")
   {
     $AnyNonDefaultsp = 1
     Write-Verbose "LocalAccountTokenFilterPolicy is enabled, meaning that non-RID-500 administrators remote sessions are given elevated privileges."
@@ -286,12 +281,12 @@ $LUAExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][1] -e
 
 if ($LUAExplicitlyDisabled.Count -gt 0)
 {
-  Write-Output "LUAEnabled is explicitly disabled for the following OUs. This indicates any local administrator, RID-500 or otherwise, can perform privileged actions via non-interactive remote sessions:"
+  Write-Output "EnableLUA is explicitly disabled for the following OUs. This indicates any local administrator, RID-500 or otherwise, can perform privileged actions via non-interactive remote sessions:"
   $LUAExplicitlyDisabled | Write-Output 
   Write-Output ""
 }
 else {
-  Write-Output "LUAEnabled is set to the default value for all OUs, which indicates that OUs are following the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy."
+  Write-Output "EnableLUA is set to the default value for all OUs, which indicates that OUs are following the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy."
 }
 
 Write-Verbose "--Analyzing LocalAccountTokenFilterPolicy--"

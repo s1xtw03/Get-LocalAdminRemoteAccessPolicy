@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Having an understanding of which OUs are allowing remote access to local administrators helps identify gaps in organizational security policy. It can also be useful for penetration testing or attack simulation work, where local administrator or LAPS credentials have been compromised.
-    Note that this script requires Microsoft RSAT modules if GPOReport and OU list files are not provided.
+    Note that this script requires Microsoft RSAT modules if the GPOReport is not provided.
     For information on RSAT, see https://docs.microsoft.com/en-us/troubleshoot/windows-server/system-management-components/remote-server-administration-tools
 
 .EXAMPLE
@@ -257,14 +257,14 @@ $FATImplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][0] -e
 
 if ($FATEnabled.Count -gt 0)
 {
-  Write-Output "FilterAdministrationToken is enabled for the following OUs and inherited by their children, which restricts RID-500 Administrator from performing privileged actions via non-interactive remote sessions:"
+  Write-Output "FilterAdministrationToken is enabled for the following OUs and inherited by their children:"
   $FATParents | Write-Output 
   Write-Output ""
 }
 
 if ($FATExplicitlyDisabled.Count -gt 0)
 {
-  Write-Output "FilterAdministrationToken is explicitly disabled for the following OUs, which likely bypasses any inherited restrictions. This indicates RID-500 Administrator can perform privileged actions via non-interactive remote sessions:"
+  Write-Output "FilterAdministrationToken is explicitly disabled for the following OUs, which likely bypasses any inherited restrictions:"
   $FATExplicitlyDisabled | Write-Output 
   Write-Output ""
 }
@@ -281,7 +281,7 @@ $LUAExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][1] -e
 
 if ($LUAExplicitlyDisabled.Count -gt 0)
 {
-  Write-Output "EnableLUA is explicitly disabled for the following OUs. This indicates any local administrator, RID-500 or otherwise, can perform privileged actions via non-interactive remote sessions:"
+  Write-Output "EnableLUA is explicitly disabled for the following OU:"
   $LUAExplicitlyDisabled | Write-Output 
   Write-Output ""
 }
@@ -294,10 +294,10 @@ $LATFPEnabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][2] -eq 1} | So
 
 if ($LATFPEnabled.Count -gt 0)
 {
-  Write-Output "LocalAccountTokenFilterPolicy is enabled for the following OUs. This indicates that non-RID-500 administrators remote sessions are given elevated privileges."
+  Write-Output "LocalAccountTokenFilterPolicy is enabled for the following OUs:"
   $LATFPEnabled | Write-Output
   Write-Output ""
 }
 else {
-  Write-Output "LocalAccountTokenFilterPolicy is set to the default value for all OUs, which indicates that non-RID-500 administrators cannot perform administrative actions via non-interactive remote sessions."
+  Write-Output "LocalAccountTokenFilterPolicy is set to the default value for all OUs."
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-16"?>
 
-<report>
+<GPOS>
 
 <GPO xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.microsoft.com/GroupPolicy/Settings">
   <Identifier>
@@ -4100,4 +4100,4 @@ If you set this policy to ‘disabled’, new remote shell connections are rejec
   </LinksTo>
 </GPO>
 
-</report>
+</GPOS>

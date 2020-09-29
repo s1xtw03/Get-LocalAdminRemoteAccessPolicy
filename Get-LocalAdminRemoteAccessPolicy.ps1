@@ -79,20 +79,32 @@ $XMLNameSpaces = @{gpns="http://www.microsoft.com/GroupPolicy/Settings";
                      q1="http://www.microsoft.com/GroupPolicy/Settings/Security";
                      q2="http://www.microsoft.com/GroupPolicy/Settings/Windows/Registry"}
 
+#sometimes its GPOS, sometimes it's report
+$RootNode = "GPOS"
+#Get the XML nodes associated with OU names
+$AllGPOManagedOUs = Select-Xml -XML $GPOXML -XPath "/$RootNode/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces | Select-Object -Expand Node | Select-Object -Expand '#text'
+
+if ($AllGPOManagedOUs.Count -eq 0)
+{
+  $RootNode = "report"
+  $AllGPOManagedOUs = Select-Xml -XML $GPOXML -XPath "/$RootNode/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces | Select-Object -Expand Node | Select-Object -Expand '#text'
+  if($AllGPOManagedOUs.Count -eq 0)
+  {
+    Write-Output "Couldn't parse the XML, or the GPO doesn't reference any OUs."
+  }
+}
+
 #Get the XML nodes associated with GPOs that have remote access policy directives
 $FATKey = "MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken"
-$FATXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$FATKey']]"
+$FATXPath = "/$RootNode/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$FATKey']]"
 $FilterAdministratorTokenNodes = Select-Xml -Xml $GPOXML -XPath $FATXPath -Namespace $XMLNameSpaces
 
 $EnableLUAKey = "MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA"
-$EnableLUAXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$EnableLUAKey']]"
+$EnableLUAXPath = "/$RootNode/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$EnableLUAKey']]"
 $EnableLUANodes = Select-Xml -Xml $GPOXML -XPath $EnableLUAXPath -Namespace $XMLNameSpaces
 
-$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
+$LATPXPath = "/$RootNode/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
 $LocalAccountTokenFilterPolicyNodes = Select-Xml -Xml $GPOXML -XPath $LATPXPath -Namespace $XMLNameSpaces
-
-#Get the XML nodes associated with OU names
-$AllGPOManagedOUs = Select-Xml -XML $GPOXML -XPath "/report/gpns:GPO/gpns:LinksTo/gpns:SOMPath" -Namespace $XMLNameSpaces | Select-Object -Expand Node | Select-Object -Expand '#text'
 
 $AllGPOManagedOUs = $AllGPOManagedOUs | Where-Object {$_ -match "/"}
 
@@ -198,7 +210,7 @@ ForEach($GPONode in $EnableLUANodes)
 
     ForEach($OUNode in $OUNodes)
     {
-      $OUs2Policy[$OUNode.SOMPath][1] = 0
+      $OUs2Policy[$OUNode.SOMPath][1] = -1
     }
   }
   if($EnableLUASetting -eq 1)
@@ -206,7 +218,7 @@ ForEach($GPONode in $EnableLUANodes)
     #If its explicitly enabled, track by marking -1 and assume normal inheritance
     ForEach($OUNode in $OUNodes)
     {
-      $OUs2Policy[$OUNode.SOMPath][1] = -1
+      $OUs2Policy[$OUNode.SOMPath][1] = 1
     }
     Write-Verbose "EnableLUA is enabled, meaning the system relies on the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy. (This is the default setting)"
   }
@@ -220,6 +232,8 @@ ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 
   $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry.Properties | Where-Object {$_.Name -eq "LocalAccountTokenFilterPolicy"}
   $RegistryValue = $RegistryProperty.Value
+
+  $OUNodes = $GPONode.Node.LinksTo
 
   if ($RegistryValue -eq "00000000")
   {
@@ -277,7 +291,7 @@ if ($FATImplicitlyDisabled.Count -gt 0)
 }
 
 Write-Verbose "--Analyzing EnableLUA--"
-$LUAExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][1] -eq 0} | Sort-Object | Get-Unique
+$LUAExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][1] -eq -1} | Sort-Object | Get-Unique
 
 if ($LUAExplicitlyDisabled.Count -gt 0)
 {

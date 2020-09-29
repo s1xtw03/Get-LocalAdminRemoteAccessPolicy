@@ -38,7 +38,7 @@ EnableLUA is explicitly disabled for the following OU:
 windomain.local/Stage
 
 LocalAccountTokenFilterPolicy is enabled for the following OUs:
-windomain.local/Stage
+windomain.local/Admin/Tier 2/T2-Servers
 ~~~
 
 ## Other Notes

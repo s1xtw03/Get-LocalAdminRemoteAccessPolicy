@@ -16,7 +16,7 @@
     Depending on the domain configuration, one may wish to specify a domain to analyze. 
 
 .EXAMPLE
-    ./Get-RemoteAdminPermittedPermittedOUs.ps1 -GPOReportFile "C:\Path\To\GPOReport.xml" -OUListFile "C:\Path\To\OUList.txt"
+    ./Get-RemoteAdminPermittedPermittedOUs.ps1 -GPOReportFile "C:\Path\To\GPOReport.xml"
     If you have manually obtained the GPO Report and OU List, provide the file paths in this way. 
 
 .PARAMETER Domain
@@ -25,10 +25,6 @@
 .PARAMETER GPOReportFile
     The path to a file containing all GPOs for the domain you wish to analyze. 
     Should be generated via: Get-GPOReport -All -Domain "thedomain.com" -ReportType xml
-
-.PARAMETER OUListFile
-    The path to a file containing all GPOs for the domain you wish to analyze. 
-    Should be generated via: Get-ADOrganizationalUnit -Filter 'Name -like "*"' | Select -ExpandProperty DistinguishedName
 
 .PARAMETER Verbose
     Print additional output as this script searches group policy objects.
@@ -42,8 +38,7 @@
 [CmdletBinding()]
 param(
     [string] $Domain,
-    [string] $GPOReportFile,
-    [string] $OUListFile
+    [string] $GPOReportFile
 )
 
 #Retrieve the GPO Report, by file path or dynamically via RSAT
@@ -79,28 +74,6 @@ else {
   }
 }
 
-#Retrieve complete list of OUs in domain, by file path or dynamically via RSAT
-$OUList = ""
-if($OUListFile)
-{
-  try {
-    $OUList = Get-Content -Path $OUListFile
-  }
-  catch [System.Exception]
-  {
-    throw "Could not read OUListFile at path $OUListFile"
-  }
-}
-else {
-  try {
-    $OUList = Get-ADOrganizationalUnit -Filter 'Name -like "*"' | Select -ExpandProperty DistinguishedName
-  }
-  catch [System.Exception]
-  {
-    throw "Could not obtain list of OUs from domain. Perhaps RSAT is not installed, or you cannot connect to the domain controller."
-  }
-}
-
 
 $XMLNameSpaces = @{gpns="http://www.microsoft.com/GroupPolicy/Settings"; 
                      q1="http://www.microsoft.com/GroupPolicy/Settings/Security";
@@ -115,7 +88,8 @@ $EnableLUAKey = "MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\Syst
 $EnableLUAXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q1:SecurityOptions/q1:KeyName[text()='$EnableLUAKey']]"
 $EnableLUANodes = Select-Xml -Xml $GPOXML -XPath $EnableLUAXPath -Namespace $XMLNameSpaces
 
-$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
+#$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='LocalAccountTokenFilterPolicy']]"
+$LATPXPath = "/report/gpns:GPO[gpns:Computer/gpns:ExtensionData/gpns:Extension/q2:RegistrySettings/q2:Registry/q2:Properties[@name='Enabled']]"
 $LocalAccountTokenFilterPolicyNodes = Select-Xml -Xml $GPOXML -XPath $LATPXPath -Namespace $XMLNameSpaces
 
 #Get the XML nodes associated with OU names
@@ -167,7 +141,6 @@ function FindImplicit
     }
     if ($Match -eq 0)
     {
-      #Write-Verbose "HERE for $OU"
       $Implicits += $OU
     }
   }
@@ -233,7 +206,7 @@ ForEach($GPONode in $EnableLUANodes)
   }
   if($EnableLUASetting -eq 1)
   {
-    #If its explicitly disabled, track by marking -1 and assume normal inheritance
+    #If its explicitly enabled, track by marking -1 and assume normal inheritance
     ForEach($OUNode in $OUNodes)
     {
       $OUs2Policy[$OUNode.SOMPath][1] = -1
@@ -248,10 +221,12 @@ ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 {
   "Explicit LocalAccountTokenFilterPolicy directive found in GPO named '" + $GPONode.Node.Name + "' with GUID " + $GPONode.Node.Identifier.Identifier.'#text' | Write-Verbose
 
-  $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry | Where-Object {$_.KeyName -eq "LocalAccountTokenFilterPolicy"}
+  $RegistryProperty = $GPONode.Node.Computer.ExtensionData.Extension.RegistrySettings.Registry | Where-Object {$_.KeyName -eq "Enabled"}
   $RegistryValue = $RegistryProperty.Value
 
-  if ($RegistryValue -eq 0)
+  Write-Verbose $RegistryValue
+
+  if ($RegistryValue -eq "00000000")
   {
     Write-Verbose "LocalAccountTokenFilterPolicy is disabled, meaning that non-RID-500 administrators remote sessions are properly filtered. (This is the default setting)"
     #If its explicitly disabled, track by marking -1 and assume normal inheritance
@@ -274,7 +249,7 @@ ForEach($GPONode in $LocalAccountTokenFilterPolicyNodes)
 
 if($AnyNonDefaultsp -eq 0)
 {
-  Write-Output "All OUs managed by GPO are using the default policies for remote authentication. This indicates the RID 500 administrator can authenticate remotely and obtain a privileged session, while other local administrators cannot obtain a privileged session. Non-RID-500 administrators can still take administrative action via RDP, however."
+  Write-Output "All OUs managed by GPO are using the default policies for remote authentication. This indicates the RID 500 administrator can authenticate remotely and obtain a privileged session, while other local administrators cannot obtain a privileged session. Non-RID-500 administrators can likely still take administrative action via RDP, however."
   Exit
 }
 
@@ -295,14 +270,39 @@ if ($FATEnabled.Count -gt 0)
 if ($FATExplicitlyDisabled.Count -gt 0)
 {
   Write-Output "FilterAdministrationToken is explicitly disabled for the following OUs, which likely bypasses any inherited restrictions. This indicates RID-500 Administrator can perform privileged actions via non-interactive remote sessions:"
-  RemoveChildOUs($FATExplicitlyDisabled) | Write-Output 
+  $FATExplicitlyDisabled | Write-Output 
   Write-Output ""
 }
 
 if ($FATImplicitlyDisabled.Count -gt 0)
 {
-  Write-Output "FilterAdministrationToken is the default value for the following OUs. OUs which are likely restricted by inheritance have been removed."
+  Write-Output "FilterAdministrationToken is implicitly disabled for the following OUs. OUs which are likely restricted by inheritance have been removed."
   FindImplicit $FATImplicitlyDisabled $FATParents  | Write-Output
   Write-Output ""
 }
 
+Write-Verbose "--Analyzing EnableLUA--"
+$LUAExplicitlyDisabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][1] -eq 0} | Sort-Object | Get-Unique
+
+if ($LUAExplicitlyDisabled.Count -gt 0)
+{
+  Write-Output "LUAEnabled is explicitly disabled for the following OUs. This indicates any local administrator, RID-500 or otherwise, can perform privileged actions via non-interactive remote sessions:"
+  $LUAExplicitlyDisabled | Write-Output 
+  Write-Output ""
+}
+else {
+  Write-Output "LUAEnabled is set to the default value for all OUs, which indicates that OUs are following the policy set by FilterAdministrationToken and LocalAccountTokenFilterPolicy."
+}
+
+Write-Verbose "--Analyzing LocalAccountTokenFilterPolicy--"
+$LATFPEnabled = $AllGPOManagedOUs | Where-Object {$OUs2Policy[$_][2] -eq 1} | Sort-Object | Get-Unique
+
+if ($LATFPEnabled.Count -gt 0)
+{
+  Write-Output "LocalAccountTokenFilterPolicy is enabled for the following OUs. This indicates that non-RID-500 administrators remote sessions are given elevated privileges."
+  $LATFPEnabled | Write-Output
+  Write-Output ""
+}
+else {
+  Write-Output "LocalAccountTokenFilterPolicy is set to the default value for all OUs, which indicates that non-RID-500 administrators cannot perform administrative actions via non-interactive remote sessions."
+}
